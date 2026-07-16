@@ -383,30 +383,9 @@ p_base = T_base_camera @ p_camera
 - 尚未自动计算重投影误差、留一验证误差或稳定性指标。
 - 尚未提供自动化硬件测试和无硬件模拟数据测试。
 
-## 贡献
-
-欢迎提交 Issue 和 Pull Request，特别欢迎：
-
-- 新的机械臂适配实现；
-- 新的相机适配实现；
-- 硬件适配器接口抽象；
-- ChArUco/AprilTag 标定板支持；
-- 标定结果评估和异常样本剔除；
-- 模拟数据、单元测试和 CI。
-
-提交代码前请至少运行：
-
-```bash
-python -m py_compile \
-  collect_data.py compute_in_hand.py compute_to_hand.py \
-  save_poses.py save_poses2.py
-```
-
-请不要提交包含内网 IP、现场图像、真实机械臂位姿或其他敏感信息的标定数据。
-
 ## 开源许可
 
-本 Fork 的原创贡献与修改以 [MIT License](LICENSE) 发布。
+本 Fork 中由 WangZY233 完成的原创内容与修改以 [MIT License](LICENSE) 发布。
 
 > [!NOTE]
-> 上游仓库 `RealManRobot/hand_eye_calibration` 当前未提供许可证文件。本 Fork 添加的 MIT 许可证仅适用于本 Fork 贡献者拥有权利的原创内容和修改，不会自动重新授权上游代码。详见 [NOTICE](NOTICE)。
+> 上游仓库 `RealManRobot/hand_eye_calibration` 当前未提供许可证文件。本 Fork 添加的 MIT 许可证仅适用于 WangZY233 拥有权利的原创内容和修改，不会自动重新授权上游代码。详见 [NOTICE](NOTICE)。
