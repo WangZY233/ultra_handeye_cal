@@ -6,6 +6,9 @@ import time
 import sys
 import numpy as np
 import cv2
+# ==================== 相机 SDK 依赖 ====================
+# 当前参考实现使用 RealSense。更换相机时，替换此导入以及
+# displayD435() 中标记的“相机 SDK 适配点”，callback() 只需接收 BGR numpy 图像。
 import pyrealsense2 as rs
 
 from libs.log_setting import CommonLog
@@ -17,29 +20,40 @@ cam0_origin_path = create_folder_with_date() # 提前建立好的存储照片文
 logger_ = logging.getLogger(__name__)
 logger_ = CommonLog(logger_)
 
-def callback(frame):
+def callback(frame,arm):
 
     scaling_factor = 2.0
     global count
 
     cv_img = cv2.resize(frame, None, fx=scaling_factor, fy=scaling_factor, interpolation=cv2.INTER_AREA)
-    cv2.imshow("Capture_Video", cv_img)  # 窗口显示，显示名为 Capture_Video
+    gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
+    ret, corners = cv2.findChessboardCornersSB(gray, (14, 9), None)
+    show_img = cv_img.copy()
+    cv2.drawChessboardCorners(show_img, (14, 9), corners, ret)
+    cv2.imshow("Capture_Video", show_img)  # 窗口显示，显示名为 Capture_Video
 
     k = cv2.waitKey(30) & 0xFF  # 每帧数据延时 1ms，延时不能为 0，否则读取的结果会是静态帧
 
     if k == ord('s'):  # 若检测到按键 ‘s’，打印字符串
 
-        socket_command = '{"command": "get_current_arm_state"}'
-        state,pose = send_cmd(client,socket_command)
+        state, pose, joints = send_cmd(arm)
         logger_.info(f'获取状态：{"成功" if state else "失败"}，{f"当前位姿为{pose}" if state else None}')
         if state:
 
             filename = os.path.join(cam0_origin_path,"poses.txt")
+            joint_states_filename = os.path.join(cam0_origin_path,"joint_states.txt")
 
             with open(filename, 'a+') as f:
                 # 将列表中的元素用空格连接成一行
                 pose_ = [str(i) for i in pose]
                 new_line = f'{",".join(pose_)}\n'
+                # 将新行附加到文件的末尾
+                f.write(new_line)
+
+            with open(joint_states_filename, 'a+') as f:
+                # 将列表中的元素用空格连接成一行
+                joints_ = [str(i) for i in joints]
+                new_line = f'{",".join(joints_)}\n'
                 # 将新行附加到文件的末尾
                 f.write(new_line)
 
@@ -53,85 +67,61 @@ def callback(frame):
         pass
 
 
-def send_cmd(client, cmd, get_pose=True):
+def send_cmd(arm, get_pose=True):
     """
-    发送命令到机械臂并可选择性地获取姿态(pose)数据
+    通过机械臂 SDK 读取并归一化标定所需的机械臂状态。
 
     参数:
-    client: socket客户端连接
-    cmd: 要发送的命令字符串或JSON字符串
-    get_pose: 是否需要获取pose数据
+    arm: xArm SDK 的 XArmAPI 实例
+    get_pose: 保留参数，当前实现始终读取位姿
 
     返回:
-    如果get_pose为True，返回tuple (状态, pose或错误信息)
-    如果get_pose为False，返回布尔值表示命令是否成功发送
+    (success, pose, joints)，其中 pose 的位移单位为米，旋转单位为弧度。
     """
-    client.send(cmd.encode('utf-8'))
-
-    if not get_pose:
-        response = client.recv(1024).decode('utf-8')
-        logger_.info(f"response:{response}")
-        return True
-
-    time.sleep(0.1)
-    response = client.recv(4096).decode('utf-8')  # 增大接收缓冲区
-    logger_.info(f'response:{response}')
 
     try:
-        decoder = json.JSONDecoder()
-        data_list = []
-        index = 0
-        # 分割并解析所有可能的JSON对象
-        while index < len(response):
-            try:
-                # 跳过空白字符
-                while index < len(response) and response[index].isspace():
-                    index += 1
-                if index >= len(response):
-                    break
-                obj, idx = decoder.raw_decode(response[index:])
-                data_list.append(obj)
-                index += idx
-            except json.JSONDecodeError as e:
-                logger_.error(f"JSON解析错误：{str(e)}")
-                break
-
-        # 寻找最后一个包含目标状态的响应
-        target_data = None
-        for data in reversed(data_list):
-            if data.get("state") == "current_arm_state":
-                target_data = data
-                break
+        # ==================== 机械臂 SDK 适配点 1/4 ====================
+        # 以下属性是 xArm SDK 接口。更换机械臂时，在这里改为新 SDK
+        # 的位姿、关节角和错误码读取接口，并保持本函数的返回格式不变。
+        target_data = arm.position
+        joint_data = arm.angles
 
         if not target_data:
-            return False, "未找到有效的机械臂状态响应"
+            return False, None, None
 
         # 检查错误码
-        if target_data["arm_state"]["err"] != [0]:
-            return False, f"机械臂报错: {target_data['arm_state']['err']}"
-
-        # 转换单位
-        pose_raw = target_data["arm_state"]["pose"]
+        if arm.error_code != 0:
+            logger_.error_(f"机械臂报错: {arm.error_code}")
+            return False, None, None
+        # xArm 位姿格式：[x, y, z, roll, pitch, yaw]，位移为 mm，角度为度。
+        # 更换 SDK 时必须核对位姿顺序、旋转表示和单位，最终统一转为 m/rad。
+        pose_raw = target_data
         pose_converted = [
-            pose_raw[0] / 1000000,  # x: 0.001mm → m
-            pose_raw[1] / 1000000,  # y: 0.001mm → m
-            pose_raw[2] / 1000000,  # z: 0.001mm → m
-            pose_raw[3] / 1000,    # rx: 0.001rad → rad
-            pose_raw[4] / 1000,    # ry: 0.001rad → rad
-            pose_raw[5] / 1000     # rz: 0.001rad → rad
+            pose_raw[0] / 1000,  # x: 1mm → m
+            pose_raw[1] / 1000,  # y: 1mm → m
+            pose_raw[2] / 1000,  # z: 1mm → m
+            pose_raw[3] * np.pi / 180,  # rx: degree → rad
+            pose_raw[4] * np.pi / 180,  # ry: degree → rad
+            pose_raw[5] * np.pi / 180   # rz: degree → rad
         ]
 
-        return True, pose_converted
+        return True, pose_converted, joint_data
 
     except json.JSONDecodeError:
-        return False, "JSON解析错误"
+        logger_.error_("JSON解析错误")
+        return False, None, None
     except KeyError as e:
-        return False, f"响应缺少关键字段: {str(e)}"
+        logger_.error_(f"响应缺少关键字段: {str(e)}")
+        return False, None, None
     except Exception as e:
-        return False, f"处理响应时发生错误: {str(e)}"
+        logger_.error_(f"处理响应时发生错误: {str(e)}")
+        return False, None, None
 #
-def displayD435():
+def displayD435(robotip):
 
+    # ==================== 相机 SDK 适配点 1/3 ====================
+    # 相机创建、彩色流配置和启动。更换相机时替换本区块。
+    # 下游约定：每帧最终需转换为 OpenCV BGR 格式的 numpy.ndarray。
     pipeline = rs.pipeline()
     config = rs.config()
     config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
@@ -144,23 +134,50 @@ def displayD435():
 
         sys.exit(1)
 
+    # ==================== 机械臂 SDK 适配点 2/4 ====================
+    # xArm 连接与实例化。更换机械臂时，将此处替换为新 SDK 的连接方式。
+    arm = XArmAPI(robotip)
+    time.sleep(0.5)
+
+    # ==================== 机械臂 SDK 适配点 3/4 ====================
+    # xArm 清除报警/错误、上电以及进入可运动状态的流程。
+    # 更换机械臂时，按新 SDK 要求替换整个区块。
+    if arm.warn_code != 0:
+        arm.clean_warn()
+    if arm.error_code != 0:
+        arm.clean_error()
+
+    #Enable the robot
+    arm.motion_enable(enable=True)
+    arm.set_mode(0)
+    arm.set_state(0)
+
     global count
     count = 1
 
     logger_.info(f"开始手眼标定程序，当前程序版号V1.0.0")
 
+
+
     try:
         while True:
+            # ==================== 相机 SDK 适配点 2/3 ====================
+            # 相机取帧和 SDK 帧对象到 BGR numpy 图像的转换。
             frames = pipeline.wait_for_frames()
             color_frame = frames.get_color_frame()
             if not color_frame:
                 continue
 
             color_image = np.asanyarray(color_frame.get_data())
-            callback(color_image)
+            callback(color_image,arm=arm)
 
     finally:
-
+        print("退出程序")
+        # ==================== 机械臂 SDK 适配点 4/4 ====================
+        # xArm 断开连接接口；更换 SDK 时改为对应的资源释放方法。
+        arm.disconnect()
+        # ==================== 相机 SDK 适配点 3/3 ====================
+        # 相机停止采集/释放资源。更换相机时改为对应 SDK 的关闭方法。
         pipeline.stop()
         cv2.destroyAllWindows()
 
@@ -168,21 +185,11 @@ def displayD435():
 if __name__ == '__main__':
 
     robot_ip = get_ip()
-
-
-
     logger_.info(f'robot_ip:{robot_ip}')
 
-    if robot_ip:
+    if robot_ip != False:
+        # ==================== xArm SDK 导入 ====================
+        # 更换机械臂时，从这里替换 SDK 导入，并同步修改上方 4 个适配点。
+        from xarm.wrapper import XArmAPI
 
-        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client.connect((robot_ip, 8080))
-        socket_command = '{"command":"set_change_work_frame","frame_name":"Base"}'
-        send_cmd(client,socket_command,get_pose = False)
-
-    else:
-
-        popup_message("提醒", "机械臂ip没有ping通")
-        sys.exit(1)
-
-    displayD435()
+        displayD435(robot_ip)

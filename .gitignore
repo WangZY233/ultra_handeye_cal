@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Runtime logs
+*.log
+libs/web-log*
+
+# Calibration data and generated outputs
+eye_hand_data/
+RobotToolPose.csv
+calibration_result.txt
+matrix.txt
+
+# Local OMX state
+.omx/

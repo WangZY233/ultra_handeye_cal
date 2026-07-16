@@ -68,7 +68,13 @@ def func():
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
             size = gray.shape[::-1]
-            ret, corners = cv2.findChessboardCorners(gray, (XX, YY), None)
+            ret, corners = cv2.findChessboardCornersSB(gray, (XX, YY), None)
+            cv2.drawChessboardCorners(gray, (14, 9), corners, ret)
+
+            cv2.imshow('gray', gray)
+            cv2.waitKey(500)
+
+            print(f"第{i}张图像角点检测状态：{ret}")
 
             if ret:
 
@@ -104,23 +110,51 @@ def func():
         R_tool.append(tool_pose[0:3,4*i:4*i+3])
         t_tool.append(tool_pose[0:3,4*i+3])
 
-    R, t = cv2.calibrateHandEye(R_tool, t_tool, rvecs, tvecs, cv2.CALIB_HAND_EYE_TSAI)
+    methods = [
+        (cv2.CALIB_HAND_EYE_TSAI, "Tsai"),
+        (cv2.CALIB_HAND_EYE_PARK, "Park"),
+        (cv2.CALIB_HAND_EYE_HORAUD, "Horaud"),
+        (cv2.CALIB_HAND_EYE_ANDREFF, "Andreff"),
+        (cv2.CALIB_HAND_EYE_DANIILIDIS, "Daniilidis")
+    ]
+    for method, name in methods:
+        print(f"使用 {name} 方法进行手眼标定:")
+        rotation_matrix, translation_vector = cv2.calibrateHandEye(R_tool, t_tool, rvecs, tvecs, method=method)
 
-    return R,t
+        # 将旋转矩阵转换为四元数
+        rotation = R.from_matrix(rotation_matrix)
+        quaternion = rotation.as_quat()
+        x, y, z = translation_vector.flatten()
+
+        # 将旋转矩阵转换为欧拉角
+        euler_angles = R.from_matrix(rotation_matrix).as_euler('xyz', degrees=True)
+
+        logger_.info(f"旋转矩阵是:\n {            rotation_matrix}")
+
+        logger_.info(f"平移向量是:\n {            translation_vector}")
+
+        logger_.info(f"四元数是：\n {             quaternion}")
+
+        logger_.info(f"欧拉角是：\n {             euler_angles}")
+
+    return rotation_matrix, translation_vector
 
 if __name__ == '__main__':
 
-    # 旋转矩阵
     rotation_matrix, translation_vector = func()
 
-    # 将旋转矩阵转换为四元数
-    rotation = R.from_matrix(rotation_matrix)
-    quaternion = rotation.as_quat()
-    x, y, z = translation_vector.flatten()
+        # # 将旋转矩阵转换为四元数
+        # rotation = R.from_matrix(rotation_matrix)
+        # quaternion = rotation.as_quat()
+        # x, y, z = translation_vector.flatten()
 
-    logger_.info(f"旋转矩阵是:\n {            rotation_matrix}")
+        # # 将旋转矩阵转换为欧拉角
+        # euler_angles = R.from_matrix(rotation_matrix).as_euler('xyz', degrees=True)
 
-    logger_.info(f"平移向量是:\n {            translation_vector}")
+        # logger_.info(f"旋转矩阵是:\n {            rotation_matrix}")
 
-    logger_.info(f"四元数是：\n {             quaternion}")
+        # logger_.info(f"平移向量是:\n {            translation_vector}")
 
+        # logger_.info(f"四元数是：\n {             quaternion}")
+
+        # logger_.info(f"欧拉角是：\n {             euler_angles}")

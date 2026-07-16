@@ -35,26 +35,19 @@ def ping(ip):
         return False
 
 
-# 主函数，依次尝试ping两个IP地址
+# 参考采集实现使用 IP 连接机械臂。
+# 更换连接方式时，可以将本函数替换为串口、USB、ROS 或配置文件读取逻辑。
 def get_ip():
-
-    ip1 = "192.168.1.18"
-    ip2 = "192.168.10.18"
-
-    if ping(ip1):
-
-        print(f"Successfully pinged {ip1}")
-        return ip1
-
-    elif ping(ip2):
-
-        print(f"Successfully pinged {ip2}")
-        return ip2
-
-    else:
-
-        print("Unable to ping both IP addresses")
+    ip = os.getenv("ROBOT_IP") or input("请输入机械臂 IP：").strip()
+    if not ip:
+        logger_.error_("未提供机械臂 IP")
         return False
+
+    if not ping(ip):
+        logger_.error_(f"无法连通机械臂: {ip}")
+        return False
+
+    return ip
 
 
 def create_folder_with_date():
