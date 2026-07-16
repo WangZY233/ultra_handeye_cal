@@ -394,4 +394,7 @@ python -m py_compile \
 
 ## 开源许可
 
-当前仓库尚未包含 `LICENSE` 文件。正式对外发布前，请由项目维护者选择并添加合适的开源许可证，例如 MIT、BSD-3-Clause 或 Apache-2.0。
+本 Fork 的原创贡献与修改以 [MIT License](LICENSE) 发布。
+
+> [!NOTE]
+> 上游仓库 `RealManRobot/hand_eye_calibration` 当前未提供许可证文件。本 Fork 添加的 MIT 许可证仅适用于本 Fork 贡献者拥有权利的原创内容和修改，不会自动重新授权上游代码。详见 [NOTICE](NOTICE)。
