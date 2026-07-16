@@ -18,6 +18,38 @@
 > [!IMPORTANT]
 > 当前代码中保留了 **xArm + Intel RealSense** 的参考采集实现，但它们不是标定算法的限制。使用其他机械臂或相机时，只需替换 `collect_data.py` 中已明确标记的 SDK 适配区，后续标定计算代码不需改动。
 
+## 第一次使用：先看这里
+
+如果你是第一次做手眼标定，可以先不研究公式，按下面的顺序操作：
+
+1. **确认相机安装方式**：相机装在末端就选 Eye-in-Hand，相机固定在机械臂外部就选 Eye-to-Hand。
+2. **安装 Python 依赖和硬件 SDK**。
+3. **接入机械臂和相机**：让程序能同时获取一张图像和对应的机械臂末端位姿。
+4. **配置棋盘格内角点数和方格尺寸**。
+5. **采集约 50 组数据**：重点覆盖目标物体将来可能出现的工作区域。
+6. **运行对应的计算脚本**，得到旋转矩阵 `R` 和平移向量 `t`。
+7. **用已知点验证结果**，确认误差可接受后，再接入机械臂抓取程序。
+
+> [!CAUTION]
+> 脚本能成功打印矩阵，不等于标定结果一定正确。在验证前，不要把结果直接用于高速或大范围机械臂运动。
+
+## 新手需要知道的坐标系
+
+| 名称 | 含义 |
+| --- | --- |
+| Base | 机械臂基座坐标系，机械臂的全局参考坐标系 |
+| End / Gripper | 机械臂末端或工具坐标系 |
+| Camera | 相机坐标系，视觉程序计算的物体位置通常先位于这个坐标系 |
+| Board / Target | 棋盘格标定板坐标系 |
+
+本文档使用 `T_A_B` 表示“**把 B 坐标系中的点转换到 A 坐标系**”的 4×4 齐次变换矩阵。例如：
+
+```python
+p_base = T_base_camera @ p_camera
+```
+
+表示将相机坐标系中的点 `p_camera` 转换到机械臂 Base 坐标系。
+
 ## 功能
 
 - 同步保存棋盘格图像和机械臂位姿。
@@ -320,32 +352,197 @@ calibration_result.txt
 matrix.txt
 ```
 
-## 使用标定结果
+## 最终会得到什么结果
 
-将旋转矩阵 `R` 和平移向量 `t` 组合成齐次变换：
+运行计算脚本后，终端会打印类似下面的内容：
+
+```text
+旋转矩阵是:
+[[r11 r12 r13]
+ [r21 r22 r23]
+ [r31 r32 r33]]
+
+平移向量是:
+[[tx]
+ [ty]
+ [tz]]
+
+四元数是:
+[qx qy qz qw]
+
+欧拉角是:          # Eye-to-Hand 脚本会打印
+[rx ry rz]
+```
+
+### 这些数值分别是什么
+
+| 结果 | 含义 | 单位/顺序 | 是否推荐直接使用 |
+| --- | --- | --- | --- |
+| 旋转矩阵 `R` | 两个坐标系之间的旋转关系 | 3×3 矩阵 | **推荐** |
+| 平移向量 `t` | 两个坐标系原点之间的平移关系 | 默认为米 | **推荐** |
+| 四元数 | `R` 的另一种旋转表示 | `[x, y, z, w]` | 只在下游系统需要四元数时使用 |
+| 欧拉角 | `R` 的另一种旋转表示 | XYZ，度 | 主要用于人工查看，不建议作为主要存储格式 |
+
+> [!IMPORTANT]
+> `R`、四元数和欧拉角是**同一个旋转结果的三种表示方式**，不是三个不同的标定结果。对初学者来说，最简单、最不容混淆的做法是始终保存并使用 **旋转矩阵 `R` + 平移向量 `t`**。
+
+### Eye-in-Hand 的结果方向
+
+`compute_in_hand.py` 当前使用 Tsai 方法，输出：
+
+```text
+T_end_camera
+```
+
+它的含义是：将相机 Camera 坐标系中的点，转换到机械臂末端 End 坐标系。
+
+### Eye-to-Hand 的结果方向
+
+`compute_to_hand.py` 会分别打印五种方法的：
+
+```text
+T_base_camera
+```
+
+它的含义是：将相机 Camera 坐标系中的点，直接转换到机械臂 Base 坐标系。
+
+## 如何选择标定结果
+
+### Eye-in-Hand
+
+当前脚本只计算 Tsai 方法，因此没有多组算法结果需要选择。但是，**仍然必须验证 Tsai 结果的实际误差**。
+
+### Eye-to-Hand
+
+当前脚本会依次计算：
+
+1. Tsai
+2. Park
+3. Horaud
+4. Andreff
+5. Daniilidis
+
+这五组数值是五种求解方法对同一批数据的计算结果。
+不存在一个对所有机械臂、相机、安装方式和采样数据都一定最好的方法，因此必须使用实际验证误差选择。
+
+> [!WARNING]
+> 脚本目前会在循环结束后返回最后一组 Daniilidis 结果，但这**不代表 Daniilidis 一定最好**。不要因为它是最后打印或最后返回的结果就直接选择它。
+
+推荐使用以下方法选择：
+
+1. **先排除明显异常的结果**：包含 `NaN`、无穷大、平移量级明显不可能，或与其他方法完全不一致的结果不应直接使用。
+2. **查看五种方法是否大致一致**：如果多种方法的平移和旋转非常接近，说明这批数据的求解通常更稳定。如果差异很大，应优先重新检查样本质量、单位、坐标系方向和图像/位姿同步，而不是随便挑一组。
+3. **在实际工作区域放置多个验证点**：建议选择至少 5～10 个不同位置和深度的点。
+4. **分别使用每种方法转换验证点**，比较转换后的机械臂 Base 坐标与已知真值。
+5. **选择平均误差小、最大误差也可接受的方法**。不要只看某一个点的误差。
+6. **重新采集或抽取部分样本再计算一次**。如果某种方法多次结果都比较接近，说明它在当前设备和数据上更稳定。
+
+如果完全没有真值或已知点，只能根据多种方法的一致性做初步判断，不能证明结果已经准确。
+
+### 一个最简单的位置误差计算
 
 ```python
 import numpy as np
 
-T = np.eye(4)
-T[:3, :3] = R
-T[:3, 3] = np.asarray(t).reshape(3)
+# 标定结果转换得到的 Base 坐标，单位：m
+estimated_point = np.array([x_est, y_est, z_est])
+
+# 验证点在 Base 坐标系中的已知坐标，单位：m
+reference_point = np.array([x_ref, y_ref, z_ref])
+
+error_m = np.linalg.norm(estimated_point - reference_point)
+error_mm = error_m * 1000
+print(f"位置误差: {error_mm:.2f} mm")
 ```
 
-Eye-in-Hand：
+## 如何使用标定结果
+
+### 1. 把 `R` 和 `t` 组合成 4×4 矩阵
 
 ```python
-p_base = T_base_end @ T_end_camera @ p_camera
+import numpy as np
+
+def make_transform(rotation_matrix, translation_vector):
+    transform = np.eye(4, dtype=float)
+    transform[:3, :3] = np.asarray(rotation_matrix, dtype=float)
+    transform[:3, 3] = np.asarray(translation_vector, dtype=float).reshape(3)
+    return transform
+
+T = make_transform(R, t)
 ```
 
-Eye-to-Hand：
+### 2. 转换一个三维点
+
+假设视觉程序已经得到物体在相机坐标系中的三维坐标：
 
 ```python
-p_base = T_base_camera @ p_camera
+def transform_point(transform, point_xyz):
+    point_h = np.append(np.asarray(point_xyz, dtype=float), 1.0)
+    transformed = transform @ point_h
+    return transformed[:3]
+
+# 例如：物体在相机前方某处，单位必须与标定结果一致
+p_camera = np.array([x_camera, y_camera, z_camera])
+```
+
+#### Eye-in-Hand
+
+Eye-in-Hand 的相机会随机械臂末端运动，因此每次使用都需读取机械臂当前的 `T_base_end`：
+
+```python
+T_end_camera = make_transform(R, t)  # compute_in_hand.py 的结果
+T_base_camera = T_base_end @ T_end_camera
+p_base = transform_point(T_base_camera, p_camera)
+```
+
+#### Eye-to-Hand
+
+Eye-to-Hand 的相机固定在机械臂外部，因此 `T_base_camera` 在相机没有移动时是固定的：
+
+```python
+T_base_camera = make_transform(R, t)  # 选定的 compute_to_hand.py 结果
+p_base = transform_point(T_base_camera, p_camera)
+```
+
+`p_base` 就是物体在机械臂 Base 坐标系下的位置。后续还需结合夹爪长度、TCP 偏移、抓取姿态和安全路径，才能真正生成机械臂运动命令。
+
+### 3. 转换一个完整的物体位姿
+
+如果视觉程序输出的不只是一个点，而是物体在相机坐标系中的完整位姿 `T_camera_object`，则：
+
+```python
+T_base_object = T_base_camera @ T_camera_object
+```
+
+`T_base_object[:3, 3]` 是物体在 Base 坐标系下的位置，`T_base_object[:3, :3]` 是物体在 Base 坐标系下的旋转。
+
+### 4. 建议如何保存最终结果
+
+当前脚本只会把最终结果打印到终端，不会自动生成最终标定文件。`RobotToolPose.csv` 是计算过程中的中间文件，**不是最终手眼标定结果**。
+
+建议将通过验证的结果保存为 YAML，并明确记录方向、方法和单位：
+
+```yaml
+mode: eye_to_hand
+method: Park  # 仅为格式示例，请填写验证后选定的方法
+transform: T_base_camera
+translation_unit: meter
+quaternion_order: xyzw
+rotation_matrix:
+  - [r11, r12, r13]
+  - [r21, r22, r23]
+  - [r31, r32, r33]
+translation:
+  - tx
+  - ty
+  - tz
+validation:
+  mean_position_error_mm: 0.0
+  max_position_error_mm: 0.0
 ```
 
 > [!CAUTION]
-> 在将标定结果用于真实机械臂运动前，必须用已知点验证变换方向、TCP/工具坐标系、长度单位和旋转约定。
+> 在将标定结果用于真实机械臂运动前，必须检查：变换方向、位移单位、四元数顺序、欧拉角顺序、TCP/工具坐标系，以及验证点误差。
 
 ## 常见问题
 
